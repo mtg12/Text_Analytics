@@ -1,0 +1,72 @@
+import pandas as pd
+from bs4 import BeautifulSoup
+from nltk.tokenize import WordPunctTokenizer
+import re
+
+df_train=pd.read_csv('train_tweets.csv')
+df_test=pd.read_csv('test_tweets.csv')
+
+df_train.drop(['id'],axis=1,inplace=True)
+df_test.drop(['id'],axis=1,inplace=True)
+
+# Data Preperation
+# HTML Decoding
+# Remove @mention
+# Remove URL Links
+# UTF-8 Decoding
+# Remove # and other spl characters
+
+
+tok=WordPunctTokenizer()
+
+pat1 = r'@[A-Za-z0-9_]+'
+pat2 = r'https?://[^ ]+'
+combined_pat = r'|'.join((pat1, pat2))
+www_pat = r'www.[^ ]+'
+negations_dic = {"isn't":"is not", "aren't":"are not", "wasn't":"was not", "weren't":"were not",
+                "haven't":"have not","hasn't":"has not","hadn't":"had not","won't":"will not",
+                "wouldn't":"would not", "don't":"do not", "doesn't":"does not","didn't":"did not",
+                "can't":"can not","couldn't":"could not","shouldn't":"should not","mightn't":"might not",
+                "mustn't":"must not"}
+neg_pattern = re.compile(r'\b(' + '|'.join(negations_dic.keys()) + r')\b')
+
+def tweet_cleaner(text):
+    soup = BeautifulSoup(text, 'lxml')
+    souped = soup.get_text()
+    try:
+        bom_removed = souped.decode("utf-8-sig").replace(u"\ufffd", "?")
+    except:
+        bom_removed = souped
+    stripped = re.sub(combined_pat, '', bom_removed)
+    stripped = re.sub(www_pat, '', stripped)
+    lower_case = stripped.lower()
+    neg_handled = neg_pattern.sub(lambda x: negations_dic[x.group()], lower_case)
+    letters_only = re.sub("[^a-zA-Z]", " ", neg_handled)
+    # During the letters_only process two lines above, it has created unnecessay white spaces,
+    # I will tokenize and join together to remove unneccessary white spaces
+    words = [x for x  in tok.tokenize(letters_only) if len(x) > 1]
+    return (" ".join(words)).strip()
+
+print("Cleaning and parsing the tweets\n")
+print('*'*80)
+clean_train=[]
+clean_test=[]
+
+for i in range(31962):
+    clean_train.append(tweet_cleaner(df_train['tweet'][i]))
+
+for i in range(17197):
+        clean_test.append(tweet_cleaner(df_test['tweet'][i]))
+
+print("Cleaned and parsed\n")
+
+clean_df_train = pd.DataFrame(clean_train,columns=['tweet'])
+clean_df_train['target'] = df_train.label
+
+clean_df_test = pd.DataFrame(clean_test,columns=['tweet'])
+
+print(clean_df_train.head(10))
+print(clean_df_test.head(10))
+
+clean_df_train.to_csv('clean_tweet_train.csv',encoding='utf-8')
+clean_df_test.to_csv('clean_tweet_test.csv',encoding='utf-8')
