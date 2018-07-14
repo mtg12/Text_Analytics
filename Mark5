@@ -1,0 +1,107 @@
+# Neural Networks using keras
+
+# Dimensionality Reduction with CountVectoriser, TF_IDF and DoctoVec
+
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+
+csv = 'clean_tweet.csv'
+my_df = pd.read_csv(csv,index_col=0)
+#print(my_df.head())
+
+my_df.dropna(inplace=True)
+my_df.reset_index(drop=True,inplace=True)
+
+x = my_df.tweet
+y = my_df.target
+
+# Split data into train, validation and test
+from sklearn.cross_validation import train_test_split
+SEED = 2000
+x_train, x_validation_and_test, y_train, y_validation_and_test = train_test_split(x, y, test_size=.1, random_state=SEED)
+x_validation, x_test, y_validation, y_test = train_test_split(x_validation_and_test, y_validation_and_test, test_size=.5, random_state=SEED)
+
+print("Train set has total {0} entries with {1:.2f}% negative, {2:.2f}% positive".format(len(x_train),
+                                                                             (len(x_train[y_train == 0]) / (len(x_train)*1.))*100,
+                                                                            (len(x_train[y_train == 1]) / (len(x_train)*1.))*100))
+print("Validation set has total {0} entries with {1:.2f}% negative, {2:.2f}% positive".format(len(x_validation),
+                                                                             (len(x_validation[y_validation == 0]) / (len(x_validation)*1.))*100,
+                                                                            (len(x_validation[y_validation == 1]) / (len(x_validation)*1.))*100))
+print("Test set has total {0} entries with {1:.2f}% negative, {2:.2f}% positive".format(len(x_test),
+                                                                             (len(x_test[y_test == 0]) / (len(x_test)*1.))*100,
+                                                                            (len(x_test[y_test == 1]) / (len(x_test)*1.))*100))
+
+# Convert data into TF-IDF vector
+from sklearn.feature_extraction.text import TfidfVectorizer
+tvec1 = TfidfVectorizer(max_features=9000,ngram_range=(1, 3))
+tvec1.fit(x_train)
+
+x_train_tfidf = tvec1.transform(x_train)
+
+print(x_train_tfidf.shape)
+
+x_validation_tfidf = tvec1.transform(x_validation).toarray()
+
+from sklearn.linear_model import LogisticRegression
+clf = LogisticRegression()
+clf.fit(x_train_tfidf, y_train)
+
+print("Logistic Regression-Validation fit")
+print(clf.score(x_validation_tfidf, y_validation))
+print("Logistic Regression-Training fit")
+print(clf.score(x_train_tfidf, y_train))
+
+seed = 7
+np.random.seed(seed)
+from keras.models import Sequential
+from keras.layers import Dense, Dropout
+from keras.layers import Flatten
+from keras.layers.embeddings import Embedding
+from keras.preprocessing import sequence
+
+
+def batch_generator(X_data, y_data, batch_size):
+    samples_per_epoch = X_data.shape[0]
+    number_of_batches = samples_per_epoch/batch_size
+    counter=0
+    index = np.arange(np.shape(y_data)[0])
+    while 1:
+        index_batch = index[batch_size*counter:batch_size*(counter+1)]
+        X_batch = X_data[index_batch,:].toarray()
+        y_batch = y_data[y_data.index[index_batch]]
+        counter += 1
+        yield X_batch,y_batch
+        if (counter > number_of_batches):
+            counter=0
+
+model = Sequential()
+model.add(Dense(16, activation='relu', input_dim=9000))
+model.add(Dense(1, activation='sigmoid'))
+model.compile(optimizer='adam',
+              loss='binary_crossentropy',
+              metrics=['accuracy'])
+
+#model.fit_generator(generator=batch_generator(x_train_tfidf, y_train, 1000),
+#                    epochs=5, validation_data=(x_validation_tfidf, y_validation),
+#                    steps_per_epoch=x_train_tfidf.shape[0]/1000)
+
+from sklearn.preprocessing import Normalizer
+norm = Normalizer().fit(x_train_tfidf)
+x_train_tfidf_norm = norm.transform(x_train_tfidf)
+x_validation_tfidf_norm = norm.transform(x_validation_tfidf)
+
+model_n = Sequential()
+model_n.add(Dense(64, activation='relu', input_dim=9000))
+model_n.add(Dense(1, activation='sigmoid'))
+model_n.compile(optimizer='adam',
+              loss='binary_crossentropy',
+              metrics=['accuracy'])
+
+model_n.fit_generator(generator=batch_generator(x_train_tfidf_norm, y_train, 1000),
+                    epochs=5, validation_data=(x_validation_tfidf_norm, y_validation),
+                    steps_per_epoch=x_train_tfidf_norm.shape[0]/1000)
+
+
+
+
