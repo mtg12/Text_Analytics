@@ -1,0 +1,136 @@
+# Dimensionality Reduction with CountVectoriser, TF_IDF and DoctoVec
+
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+
+csv = 'clean_tweet.csv'
+my_df = pd.read_csv(csv,index_col=0)
+#print(my_df.head())
+
+my_df.dropna(inplace=True)
+my_df.reset_index(drop=True,inplace=True)
+
+x = my_df.tweet
+y = my_df.target
+
+from sklearn.cross_validation import train_test_split
+SEED = 2000
+x_train, x_validation_and_test, y_train, y_validation_and_test = train_test_split(x, y, test_size=.1, random_state=SEED)
+x_validation, x_test, y_validation, y_test = train_test_split(x_validation_and_test, y_validation_and_test, test_size=.5, random_state=SEED)
+
+from textblob import TextBlob
+from sklearn.metrics import accuracy_score
+from sklearn.metrics import classification_report, confusion_matrix
+
+from sklearn.feature_extraction.text import CountVectorizer
+from sklearn.linear_model import LogisticRegression
+from sklearn.pipeline import Pipeline
+from time import time
+
+def accuracy_summary(pipeline, x_train, y_train, x_test, y_test):
+    if len(x_test[y_test == 0]) / (len(x_test)*1.) > 0.5:
+        null_accuracy = len(x_test[y_test == 0]) / (len(x_test)*1.)
+    else:
+        null_accuracy = 1. - (len(x_test[y_test == 0]) / (len(x_test)*1.))
+    t0 = time()
+    sentiment_fit = pipeline.fit(x_train, y_train)
+    y_pred = sentiment_fit.predict(x_test)
+    train_test_time = time() - t0
+    accuracy = accuracy_score(y_test, y_pred)
+    print ("null accuracy: {0:.2f}%".format(null_accuracy*100))
+    print ("accuracy score: {0:.2f}%".format(accuracy*100))
+    if accuracy > null_accuracy:
+        print ("model is {0:.2f}% more accurate than null accuracy".format((accuracy-null_accuracy)*100))
+    elif accuracy == null_accuracy:
+        print ("model has the same accuracy with the null accuracy")
+    else:
+        print ("model is {0:.2f}% less accurate than null accuracy".format((null_accuracy-accuracy)*100))
+    print ("train and test time: {0:.2f}s".format(train_test_time))
+    print ("-"*80)
+    return accuracy, train_test_time
+
+
+# Count Vectoriser
+cvec = CountVectorizer()
+lr = LogisticRegression()
+n_features = np.arange(1000,35000,2000)
+
+def nfeature_accuracy_checker(vectorizer=cvec, n_features=n_features, stop_words=None, ngram_range=(1, 1), classifier=lr):
+    result = []
+    print (classifier)
+    print ("\n")
+    for n in n_features:
+        vectorizer.set_params(stop_words=stop_words, max_features=n, ngram_range=ngram_range)
+        checker_pipeline = Pipeline([
+            ('vectorizer', vectorizer),
+            ('classifier', classifier)
+        ])
+        #print ("Validation result for {} features".format(n))
+        nfeature_accuracy,tt_time = accuracy_summary(checker_pipeline, x_train, y_train, x_validation, y_validation)
+        result.append((n,nfeature_accuracy,tt_time))
+    return result
+
+#TF IDF Vectoriser
+
+from sklearn.feature_extraction.text import TfidfVectorizer
+tvec = TfidfVectorizer()
+
+print ("RESULT FOR BIGRAM WITH STOP WORDS (Tfidf)\n")
+feature_result_tgt = nfeature_accuracy_checker(vectorizer=tvec,ngram_range=(1, 2),stop_words='english')
+nfeatures_plot_tgt = pd.DataFrame(feature_result_tgt,columns=['nfeatures','validation_accuracy','train_test_time'])
+
+# Dimensianlity Reduction with TF-IDF with chi2
+
+tvec = TfidfVectorizer(max_features=100000,ngram_range=(1, 2))
+x_train_tfidf = tvec.fit_transform(x_train)
+x_validation_tfidf = tvec.transform(x_validation)
+
+from sklearn.feature_selection import chi2
+chi2score = chi2(x_train_tfidf, y_train)[0]
+
+plt.figure(figsize=(15,10))
+wscores = list(zip(tvec.get_feature_names(), chi2score))
+wchi2 = sorted(wscores, key=lambda x:x[1])
+topchi2 = list(zip(*wchi2[-20:]))
+
+x = range(len(topchi2[1]))
+labels = topchi2[0]
+plt.barh(x,topchi2[1], align='center', alpha=0.2)
+plt.plot(topchi2[1], x, '-o', markersize=5, alpha=0.8)
+plt.yticks(x, labels)
+plt.xlabel('$\chi^2$')
+plt.show()
+
+from sklearn.feature_selection import SelectKBest, chi2
+ch2_result = []
+for n in np.arange(1000,35000,2000):
+    ch2 = SelectKBest(chi2, k=n)
+    x_train_chi2_selected = ch2.fit_transform(x_train_tfidf, y_train)
+    x_validation_chi2_selected = ch2.transform(x_validation_tfidf)
+    clf = LogisticRegression()
+    clf.fit(x_train_chi2_selected, y_train)
+    score = clf.score(x_validation_chi2_selected, y_validation)
+    ch2_result.append(score)
+    print ("chi2 feature selection evaluation calculated for {} features".format(n))
+
+plt.figure(figsize=(8,6))
+plt.plot(nfeatures_plot_tgt.nfeatures, nfeatures_plot_tgt.validation_accuracy,label='trigram tfidf vectorizer',color='royalblue')
+plt.plot(np.arange(1000,35000,2000), ch2_result,label='tfidf dimesions reduced from 100,000 features',linestyle=':', color='orangered')
+
+plt.title("tfidft vectorizer: features limited within tfidft vectorizer VS reduced dimensions with chi2")
+plt.xlabel("Number of features")
+plt.ylabel("Validation set accuracy")
+plt.legend()
+plt.show()
+
+# Principal Component Analysis
+# PCA is a dimension reduction tool that
+# can be used to reduce a large set of variables to a small set that still
+# contains most of the information in the original set.
+# It transforms the princiapl axix to a more relevant one
+
+from sklearn.preprocessing import StandardScaler
+from sklearn.decomposition import PCA
+
+# Dimensionality reduction doesnt help much , but could help in other casea
