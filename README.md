@@ -1,3 +1,3 @@
 # Text_Analytics
-Sentiment Analysis Hackathon
 Text Analysis Techniques
+Implemented from blog: https://medium.com/@rickykim78
