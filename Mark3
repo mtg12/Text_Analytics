@@ -1,0 +1,165 @@
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+
+csv = 'clean_tweet.csv'
+my_df = pd.read_csv(csv,index_col=0)
+#print(my_df.head())
+
+my_df.dropna(inplace=True)
+my_df.reset_index(drop=True,inplace=True)
+
+x = my_df.tweet
+y = my_df.target
+
+from sklearn.cross_validation import train_test_split
+SEED = 2000
+x_train, x_validation_and_test, y_train, y_validation_and_test = train_test_split(x, y, test_size=.1, random_state=SEED)
+x_validation, x_test, y_validation, y_test = train_test_split(x_validation_and_test, y_validation_and_test, test_size=.5, random_state=SEED)
+
+from sklearn.linear_model import LogisticRegression
+
+# Doc to vec
+# Shallow Neural Network embeddings used to create lingusitic contexts of words
+# Word2vec is not a single algorithm but consists of two techniques – CBOW(Continuous bag of words) and Skip-gram model
+
+from tqdm import tqdm
+tqdm.pandas(desc="progress-bar")
+from gensim.models import Doc2Vec
+from gensim.models.doc2vec import LabeledSentence
+import multiprocessing
+from sklearn import utils
+
+def labelize_tweets_ug(tweets,label):
+    result = []
+    prefix = label
+    for i, t in zip(tweets.index, tweets):
+        result.append(LabeledSentence(t.split(), [prefix + '_%s' % i]))
+    return result
+
+all_x = pd.concat([x_train,x_validation,x_test])
+all_x_w2v = labelize_tweets_ug(all_x, 'all')
+
+#print(len(all_x_w2v))
+
+# Normal Word to Vec
+
+model_ug_dbow = Doc2Vec(dm=0, size=100, negative=5, min_count=2, alpha=0.065, min_alpha=0.065)
+model_ug_dbow.build_vocab([x for x in tqdm(all_x_w2v)])
+
+for epoch in range(30):
+    model_ug_dbow.train(utils.shuffle([x for x in tqdm(all_x_w2v)]), total_examples=len(all_x_w2v), epochs=1)
+    model_ug_dbow.alpha -= 0.002
+    model_ug_dbow.min_alpha = model_ug_dbow.alpha
+
+def get_vectors(model, corpus, size):
+    vecs = np.zeros((len(corpus), size))
+    n = 0
+    for i in corpus.index:
+        prefix = 'all_' + str(i)
+        vecs[n] = model.docvecs[prefix]
+        n += 1
+    return vecs
+
+train_vecs_dbow = get_vectors(model_ug_dbow, x_train, 100)
+validation_vecs_dbow = get_vectors(model_ug_dbow, x_validation, 100)
+clf = LogisticRegression()
+clf.fit(train_vecs_dbow, y_train)
+print(clf.score(validation_vecs_dbow, y_validation))
+
+model_ug_dbow.save('d2v_model_ug_dbow.doc2vec')
+model_ug_dbow = Doc2Vec.load('d2v_model_ug_dbow.doc2vec')
+print("Sucessfully loaded distributed bag of words model \n")
+model_ug_dbow.delete_temporary_training_data(keep_doctags_vectors=True, keep_inference=True)
+
+# Distributed Memory - Concatenated
+
+cores = multiprocessing.cpu_count()
+model_ug_dmc = Doc2Vec(dm=1, dm_concat=1, size=100, window=2, negative=5, min_count=2, workers=cores, alpha=0.065, min_alpha=0.065)
+model_ug_dmc.build_vocab([x for x in tqdm(all_x_w2v)])
+
+for epoch in range(30):
+    model_ug_dmc.train(utils.shuffle([x for x in tqdm(all_x_w2v)]), total_examples=len(all_x_w2v), epochs=1)
+    model_ug_dmc.alpha -= 0.002
+    model_ug_dmc.min_alpha = model_ug_dmc.alpha
+
+print(model_ug_dmc.most_similar('good'))
+print(model_ug_dmc.most_similar('happy'))
+print(model_ug_dmc.most_similar('facebook'))
+
+train_vecs_dmc = get_vectors(model_ug_dmc, x_train, 100)
+validation_vecs_dmc = get_vectors(model_ug_dmc, x_validation, 100)
+clf = LogisticRegression()
+clf.fit(train_vecs_dmc, y_train)
+print(clf.score(validation_vecs_dmc, y_validation))
+
+model_ug_dmc.save('d2v_model_ug_dmc.doc2vec')
+model_ug_dmc = Doc2Vec.load('d2v_model_ug_dmc.doc2vec')
+print("Sucessfully loaded distributed memory concat model \n")
+model_ug_dmc.delete_temporary_training_data(keep_doctags_vectors=True, keep_inference=True)
+
+# Distributed Memory - Mean
+
+cores = multiprocessing.cpu_count()
+model_ug_dmm = Doc2Vec(dm=1, dm_mean=1, size=100, window=4, negative=5, min_count=2, workers=cores, alpha=0.065, min_alpha=0.065)
+model_ug_dmm.build_vocab([x for x in tqdm(all_x_w2v)])
+
+for epoch in range(30):
+    model_ug_dmm.train(utils.shuffle([x for x in tqdm(all_x_w2v)]), total_examples=len(all_x_w2v), epochs=1)
+    model_ug_dmm.alpha -= 0.002
+    model_ug_dmm.min_alpha = model_ug_dmm.alpha
+
+print(model_ug_dmm.most_similar('good'))
+print(model_ug_dmc.most_similar('happy'))
+
+train_vecs_dmm = get_vectors(model_ug_dmm, x_train, 100)
+validation_vecs_dmm = get_vectors(model_ug_dmm, x_validation, 100)
+
+clf = LogisticRegression()
+clf.fit(train_vecs_dmm, y_train)
+print(clf.score(validation_vecs_dmm, y_validation))
+
+model_ug_dmm.save('d2v_model_ug_dmm.doc2vec')
+model_ug_dmm = Doc2Vec.load('d2v_model_ug_dmm.doc2vec')
+print("Sucessfully loaded distributed mean model \n")
+model_ug_dmm.delete_temporary_training_data(keep_doctags_vectors=True, keep_inference=True)
+
+# Concatenate Results from 4 models
+
+def get_concat_vectors(model1,model2, corpus, size):
+    vecs = np.zeros((len(corpus), size))
+    n = 0
+    for i in corpus.index:
+        prefix = 'all_' + str(i)
+        vecs[n] = np.append(model1.docvecs[prefix],model2.docvecs[prefix])
+        n += 1
+    return vecs
+train_vecs_dbow_dmc = get_concat_vectors(model_ug_dbow,model_ug_dmc, x_train, 200)
+validation_vecs_dbow_dmc = get_concat_vectors(model_ug_dbow,model_ug_dmc, x_validation, 200)
+
+clf = LogisticRegression()
+clf.fit(train_vecs_dbow_dmc, y_train)
+print(clf.score(validation_vecs_dbow_dmc, y_validation))
+
+train_vecs_dbow_dmm = get_concat_vectors(model_ug_dbow,model_ug_dmm, x_train, 200)
+validation_vecs_dbow_dmm = get_concat_vectors(model_ug_dbow,model_ug_dmm, x_validation, 200)
+
+clf = LogisticRegression()
+clf.fit(train_vecs_dbow_dmm, y_train)
+
+print(" Results from combined model")
+print(clf.score(validation_vecs_dbow_dmm, y_validation))
+
+
+
+
+
+
+
+
+
+
+
+
+
+
