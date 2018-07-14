@@ -1,0 +1,61 @@
+# AVidya Submission
+
+import pandas as pd
+import numpy as np
+from sklearn.model_selection import train_test_split
+from sklearn.pipeline import Pipeline
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.svm import LinearSVC
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.svm import LinearSVC
+from sklearn.ensemble import RandomForestClassifier, AdaBoostClassifier
+from sklearn.naive_bayes import MultinomialNB, BernoulliNB
+from sklearn.linear_model import RidgeClassifier
+from sklearn.linear_model import PassiveAggressiveClassifier
+from sklearn.linear_model import Perceptron
+from sklearn.neighbors import NearestCentroid
+from sklearn.feature_selection import SelectFromModel
+
+
+csv = 'clean_tweet_train.csv'
+my_df = pd.read_csv(csv,index_col=0)
+test_df= pd.read_csv('clean_tweet_test.csv',index_col=0)
+
+print(test_df.info())
+print(test_df.head())
+
+
+my_df.dropna(inplace=True)
+my_df.reset_index(drop=True,inplace=True)
+
+# 37524 different words in the corpus
+# 0- nagetive [no hate speech]
+# 1- positive [hate speech detected]
+
+# Split the training data into train and validation
+x_train = my_df.tweet
+y_train = my_df.target
+
+x_test= test_df.tweet
+
+tvec = TfidfVectorizer()
+
+tvec.set_params(stop_words='english', max_features=35000, ngram_range=(1, 3))
+#pipeline = Pipeline([('vectorizer',tvec),('classifier', LinearSVC(penalty="l2"))])
+#pipeline = Pipeline([('vectorizer',tvec),('classifier', MultinomialNB())])
+#pipeline = Pipeline([('vectorizer',tvec),('classifier', BernoulliNB())])
+#pipeline = Pipeline([('vectorizer',tvec),('classifier', RidgeClassifier())])
+#pipeline = Pipeline([('vectorizer',tvec),('classifier', AdaBoostClassifier())])
+#pipeline = Pipeline([('vectorizer',tvec),('classifier', Perceptron())])
+#pipeline = Pipeline([('vectorizer',tvec),('classifier', PassiveAggressiveClassifier())])
+pipeline = Pipeline([('vectorizer',tvec),('classifier', NearestCentroid())])
+
+
+
+
+sentiment_fit = pipeline.fit(x_train, y_train)
+y_pred = sentiment_fit.predict(x_test.astype('U'))
+np.savetxt("test_predictions18.csv", y_pred, newline='\n')
+print(y_pred)
+
