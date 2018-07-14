@@ -1,0 +1,327 @@
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from bs4 import BeautifulSoup
+from nltk.tokenize import WordPunctTokenizer
+import re
+import lxml
+from sklearn.feature_extraction.text import CountVectorizer
+
+
+csv = 'clean_tweet_train.csv'
+my_df = pd.read_csv(csv,index_col=0)
+
+# Check for null tweets
+# Delete the 3 null tweets
+
+my_df.dropna(inplace=True)
+my_df.reset_index(drop=True,inplace=True)
+#print(my_df.info())
+
+# Data Visualization
+
+cvec = CountVectorizer()
+cvec.fit(my_df.tweet)
+#print(len(cvec.get_feature_names()))
+# 37524 different words in the corpus
+
+# 0- nagetive [no hate speech]
+# 1- positive [hate speech detected]
+neg_doc_matrix = cvec.transform(my_df[my_df.target == 0].tweet)
+pos_doc_matrix = cvec.transform(my_df[my_df.target == 1].tweet)
+neg_tf = np.sum(neg_doc_matrix,axis=0)
+pos_tf = np.sum(pos_doc_matrix,axis=0)
+neg = np.squeeze(np.asarray(neg_tf))
+pos = np.squeeze(np.asarray(pos_tf))
+term_freq_df = pd.DataFrame([neg,pos],columns=cvec.get_feature_names()).transpose()
+
+term_freq_df.columns = ['negative', 'positive']
+term_freq_df['total'] = term_freq_df['negative'] + term_freq_df['positive']
+term_freq_df= term_freq_df.sort_values(by='total', ascending=False)
+
+#print(term_freq_df.head(25))
+
+import seaborn as sns
+#plt.figure(figsize=(8,6))
+#ax = sns.regplot(x="negative", y="positive",fit_reg=False, scatter_kws={'alpha':0.5},data=term_freq_df)
+#plt.ylabel('Positive Frequency')
+#plt.xlabel('Negative Frequency')
+#plt.title('Negative Frequency vs Positive Frequency')
+#plt.show()
+
+# Pos rate= pos_freq/( pos_freq+ neg_freq)
+term_freq_df['pos_rate'] = term_freq_df['positive'] * 1./term_freq_df['total']
+
+term_freq_df['pos_freq_pct'] = term_freq_df['positive'] * 1./term_freq_df['positive'].sum()
+
+from scipy.stats import hmean
+
+term_freq_df['pos_hmean'] = term_freq_df.apply(lambda x: (hmean([x['pos_rate'], x['pos_freq_pct']])
+                                                                   if x['pos_rate'] > 0 and x['pos_freq_pct'] > 0
+                                                                   else 0), axis=1)
+
+from scipy.stats import norm
+def normcdf(x):
+    return norm.cdf(x, x.mean(), x.std())
+
+term_freq_df['pos_rate_normcdf'] = normcdf(term_freq_df['pos_rate'])
+term_freq_df['pos_freq_pct_normcdf'] = normcdf(term_freq_df['pos_freq_pct'])
+term_freq_df['pos_normcdf_hmean'] = hmean([term_freq_df['pos_rate_normcdf'], term_freq_df['pos_freq_pct_normcdf']])
+
+#print(term_freq_df.head(25))
+
+term_freq_df['neg_rate'] = term_freq_df['negative'] * 1./term_freq_df['total']
+term_freq_df['neg_freq_pct'] = term_freq_df['negative'] * 1./term_freq_df['negative'].sum()
+term_freq_df['neg_hmean'] = term_freq_df.apply(lambda x: (hmean([x['neg_rate'], x['neg_freq_pct']])
+                                                                   if x['neg_rate'] > 0 and x['neg_freq_pct'] > 0
+                                                                   else 0), axis=1)
+term_freq_df['neg_rate_normcdf'] = normcdf(term_freq_df['neg_rate'])
+term_freq_df['neg_freq_pct_normcdf'] = normcdf(term_freq_df['neg_freq_pct'])
+term_freq_df['neg_normcdf_hmean'] = hmean([term_freq_df['neg_rate_normcdf'], term_freq_df['neg_freq_pct_normcdf']])
+
+
+# Split the training data into train and validation
+
+x = my_df.tweet
+y = my_df.target
+from sklearn.model_selection import train_test_split
+SEED = 2000
+x_train, x_validation_and_test, y_train, y_validation_and_test = train_test_split(x, y, test_size=0.1, random_state=SEED)
+x_validation, x_test, y_validation, y_test = train_test_split(x_validation_and_test, y_validation_and_test, test_size=.5, random_state=SEED)
+
+print("Train set has total {0} entries with {1:.2f}% negative, {2:.2f}% positive".format(len(x_train),
+                                                                             (len(x_train[y_train == 0]) / (len(x_train)*1.))*100,
+                                                                            (len(x_train[y_train == 1]) / (len(x_train)*1.))*100))
+print("Validation set has total {0} entries with {1:.2f}% negative, {2:.2f}% positive".format(len(x_validation),
+                                                                             (len(x_validation[y_validation == 0]) / (len(x_validation)*1.))*100,
+                                                                            (len(x_validation[y_validation == 1]) / (len(x_validation)*1.))*100))
+print("Test set has total {0} entries with {1:.2f}% negative, {2:.2f}% positive".format(len(x_test),
+                                                                             (len(x_test[y_test == 0]) / (len(x_test)*1.))*100,
+                                                                            (len(x_test[y_test == 1]) / (len(x_test)*1.))*100))
+#Setup some baseline standards to compare our model
+from textblob import TextBlob
+from sklearn.metrics import accuracy_score
+from sklearn.metrics import classification_report, confusion_matrix
+
+#tbresult = [TextBlob(i).sentiment.polarity for i in x_validation]
+#tbpred = [0 if n < 0 else 1 for n in tbresult]
+
+#conmat = np.array(confusion_matrix(y_validation, tbpred, labels=[1,0]))
+
+#confusion = pd.DataFrame(conmat, index=['positive', 'negative'],
+#                         columns=['predicted_positive','predicted_negative'])
+#print("Accuracy Score: {0:.2f}%".format(accuracy_score(y_validation, tbpred)*100))
+#print("-"*80)
+#print("Confusion Matrix\n")
+#print(confusion)
+#print("-"*80)
+#print("Classification Report\n")
+#print(classification_report(y_validation, tbpred))
+
+# Feature Extraction
+# Convert words to numbers to apply in ML models
+
+# 1. Count vectoriser -count the occurance of each word in the corpus
+# logistic regression
+
+from sklearn.feature_extraction.text import CountVectorizer
+from sklearn.linear_model import LogisticRegression
+from sklearn.pipeline import Pipeline
+from time import time
+
+
+def accuracy_summary(pipeline, x_train, y_train, x_test, y_test):
+    if len(x_test[y_test == 0]) / (len(x_test)*1.) > 0.5:
+        null_accuracy = len(x_test[y_test == 0]) / (len(x_test)*1.)
+    else:
+        null_accuracy = 1. - (len(x_test[y_test == 0]) / (len(x_test)*1.))
+    t0 = time()
+    sentiment_fit = pipeline.fit(x_train, y_train)
+    y_pred = sentiment_fit.predict(x_test)
+    train_test_time = time() - t0
+    accuracy = accuracy_score(y_test, y_pred)
+    print("null accuracy: {0:.2f}%".format(null_accuracy*100))
+    print("accuracy score: {0:.2f}%".format(accuracy*100))
+    if accuracy > null_accuracy:
+        print("model is {0:.2f}% more accurate than null accuracy".format((accuracy-null_accuracy)*100))
+    elif accuracy == null_accuracy:
+        print("model has the same accuracy with the null accuracy")
+    else:
+        print("model is {0:.2f}% less accurate than null accuracy".format((null_accuracy-accuracy)*100))
+    print("train and test time: {0:.2f}s".format(train_test_time))
+    print ("-"*80)
+    return accuracy, train_test_time
+
+cvec = CountVectorizer()
+lr = LogisticRegression()
+n_features = np.arange(1000,37000,2000)
+
+def nfeature_accuracy_checker(vectorizer=cvec, n_features=n_features, stop_words=None, ngram_range=(1, 1), classifier=lr):
+    result = []
+    print (classifier)
+    print ("\n")
+    for n in n_features:
+        vectorizer.set_params(stop_words=stop_words, max_features=n, ngram_range=ngram_range)
+        checker_pipeline = Pipeline([
+            ('vectorizer', vectorizer),
+            ('classifier', classifier)
+        ])
+        print("Validation result for {} features".format(n))
+        nfeature_accuracy,tt_time = accuracy_summary(checker_pipeline, x_train, y_train, x_validation, y_validation)
+        result.append((n,nfeature_accuracy,tt_time))
+    return result
+
+
+#print ("RESULT FOR UNIGRAM WITHOUT STOP WORDS\n")
+#feature_result_ug = nfeature_accuracy_checker()
+
+#print ("RESULT FOR UNIGRAM WITH STOP WORDS\n")
+#feature_result_wosw = nfeature_accuracy_checker(stop_words='english')
+
+
+term_freq_df= term_freq_df.sort_values(by='total', ascending=False)
+#print(term_freq_df.head(15))
+
+my_stop_words = frozenset(list(term_freq_df.sort_values(by='total', ascending=False).iloc[:10].index))
+
+#print ("RESULT FOR UNIGRAM WITHOUT CUSTOM STOP WORDS (Top 10 frequent words)\n")
+#feature_result_wocsw = nfeature_accuracy_checker(stop_words=my_stop_words)
+
+# hence standard english stop words gove better accuracy
+
+# Go bigram..!!!
+
+#print ("RESULT FOR BIGRAM WITHOUT STOP WORDS\n")
+#feature_result_bg = nfeature_accuracy_checker(ngram_range=(1, 2))
+
+#print ("RESULT FOR BIGRAM WITH STD STOP WORDS\n")
+#feature_result_bg = nfeature_accuracy_checker(ngram_range=(1, 2),stop_words='english')
+
+#print ("RESULT FOR BIGRAM WITH MY STOP WORDS\n")
+#feature_result_bg = nfeature_accuracy_checker(ngram_range=(1, 2),stop_words=my_stop_words)
+
+#Go trigram
+
+#print ("RESULT FOR TRIGRAM WITHOUT STOP WORDS\n")
+#feature_result_bg = nfeature_accuracy_checker(ngram_range=(1, 3))
+
+#print ("RESULT FOR TRIGRAM WITH STD STOP WORDS\n")
+#feature_result_bg = nfeature_accuracy_checker(ngram_range=(1, 3),stop_words='english')
+
+# Bigram with std stop words gave best accuracy
+
+
+# 2 TF-IDF Vectorizer
+
+from sklearn.feature_extraction.text import TfidfVectorizer
+tvec = TfidfVectorizer()
+
+#print ("RESULT FOR UNIGRAM WITHOUT STOP WORDS (Tfidf)\n")
+#feature_result_ugt = nfeature_accuracy_checker(vectorizer=tvec)
+
+#print ("RESULT FOR BIGRAM WITHOUT STOP WORDS (Tfidf)\n")
+#feature_result_bgt = nfeature_accuracy_checker(vectorizer=tvec,ngram_range=(1, 2))
+
+#print ("RESULT FOR UNIGRAM WITH STD STOP WORDS (Tfidf)\n")
+#feature_result_ugt = nfeature_accuracy_checker(vectorizer=tvec,stop_words='english')
+
+#print ("RESULT FOR BIGRAM WITH STD STOP WORDS (Tfidf)\n")
+#feature_result_bgt = nfeature_accuracy_checker(vectorizer=tvec,ngram_range=(1, 2),stop_words='english')
+
+# Try new models apart from leniar regression
+
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.svm import LinearSVC
+from sklearn.ensemble import RandomForestClassifier, AdaBoostClassifier
+from sklearn.naive_bayes import MultinomialNB, BernoulliNB
+from sklearn.linear_model import RidgeClassifier
+from sklearn.linear_model import PassiveAggressiveClassifier
+from sklearn.linear_model import Perceptron
+from sklearn.neighbors import NearestCentroid
+from sklearn.feature_selection import SelectFromModel
+
+names = ["Logistic Regression", "Linear SVC", "LinearSVC with L1-based feature selection","Multinomial NB",
+         "Bernoulli NB", "Ridge Classifier", "AdaBoost", "Perceptron","Passive-Aggresive", "Nearest Centroid"]
+classifiers = [
+    LogisticRegression(),
+    LinearSVC(),
+    Pipeline([
+  ('feature_selection', SelectFromModel(LinearSVC(penalty="l1", dual=False))),
+  ('classification', LinearSVC(penalty="l2"))]),
+    MultinomialNB(),
+    BernoulliNB(),
+    RidgeClassifier(),
+    AdaBoostClassifier(),
+    Perceptron(),
+    PassiveAggressiveClassifier(),
+    NearestCentroid()
+    ]
+zipped_clf = zip(names,classifiers)
+
+tvec = TfidfVectorizer()
+def classifier_comparator(vectorizer=tvec, n_features=35000, stop_words=None, ngram_range=(1, 1), classifier=zipped_clf):
+    result = []
+    vectorizer.set_params(stop_words='english', max_features=n_features, ngram_range=ngram_range)
+    for n,c in classifier:
+        checker_pipeline = Pipeline([
+            ('vectorizer', vectorizer),
+            ('classifier', c)
+        ])
+        print ("Validation result for {}".format(n))
+        print (c)
+        clf_accuracy,tt_time = accuracy_summary(checker_pipeline, x_train, y_train, x_validation, y_validation)
+        result.append((n,clf_accuracy,tt_time))
+    return result
+
+#trigram_result = classifier_comparator(n_features=35000,ngram_range=(1,3))
+
+# Results:
+#Logistic Regression 1.38%
+#Linear SVC 3.63%
+#LinearSVC with L1-based feature selection 3.19%
+#Multinomial NB 1.31%
+#Bernoulli NB 2.07%
+#Ridge Classifier 3.25%
+#AdaBoost 1.44%
+#Perceptron 2.44%
+#Passive-Aggresive 3.19%
+#Nearest Centroid -4.26%
+
+#bigram_result = classifier_comparator(n_features=35000,ngram_range=(1,2))
+
+# Results: with out stop / with stop
+#Logistic Regression 1.38% 1.81
+#Linear SVC 3.63% 4.13
+#LinearSVC with L1-based feature selection 3.44% 3.75
+#Multinomial NB 1.25% 1.44
+#Bernoulli NB 1.75% 1.56
+#Ridge Classifier 3.25% 3.19
+#AdaBoost 1.38% 2.07
+#Perceptron 2.63% 2.38
+#Passive-Aggresive 3.32% 3.57
+#Nearest Centroid -4.26% 0.31
+
+from sklearn.ensemble import VotingClassifier
+
+clf1 = LogisticRegression()
+clf2 = LinearSVC()
+clf3 = MultinomialNB()
+clf4 = RidgeClassifier()
+clf5 = PassiveAggressiveClassifier()
+
+eclf = VotingClassifier(estimators=[('lr', clf1), ('svc', clf2), ('mnb', clf3), ('rcs', clf4), ('pac', clf5)], voting='hard')
+
+for clf, label in zip([clf1, clf2, clf3, clf4, clf5, eclf], ['Logistic Regression', 'Linear SVC', 'Multinomial NB', 'Ridge Classifier', 'Passive Aggresive Classifier', 'Ensemble']):
+    checker_pipeline = Pipeline([
+            ('vectorizer', TfidfVectorizer(max_features=100000,ngram_range=(1, 3))),
+            ('classifier', clf)
+        ])
+    print ("Validation result for {}".format(label))
+    print (clf)
+    clf_accuracy,tt_time = accuracy_summary(checker_pipeline, x_train, y_train, x_validation, y_validation)
+
+
+
+
+
